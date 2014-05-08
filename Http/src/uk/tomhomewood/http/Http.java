@@ -425,6 +425,89 @@ public class Http {
 		}
 	}
 	
+	public void executeRequest(final RequestMethod requestMethod, final Integer requestCode, final String address, final HashMap<String, String> headers, final String contentType, final String body, final int maximumRetries, final boolean allowCaching, final Bundle extras) {
+		if(isConnected()){
+			Thread postRequestThread = new Thread(new Runnable() {
+				@Override
+				public void run() {
+					if(debugRequests){
+						Log.d(TAG+" "+requestMethod.stringValue+" REQUEST:", address);
+					}
+					String responseString = null;
+	
+					URL url = null;
+					HttpURLConnection urlConnection = null;
+	
+					try {
+						url = new URL(address);
+					}
+					catch (MalformedURLException e) {}
+					if(url!=null){
+						try {
+							urlConnection = (HttpURLConnection) url.openConnection();
+							urlConnection.setConnectTimeout(2000);
+							urlConnection.setReadTimeout(2500);
+							
+							urlConnection.setRequestMethod(requestMethod.stringValue);
+							
+							if(headers!=null){
+								addRequestHeadersToConnection(urlConnection, headers);
+							}
+							
+							if(!allowCaching){
+								urlConnection.addRequestProperty("Cache-Control", "no-cache");
+							}
+							
+							urlConnection.setRequestProperty("Content-Type", contentType);
+							
+							if(body!=null){
+								urlConnection.setFixedLengthStreamingMode(body.getBytes().length);
+			
+								PrintWriter out = new PrintWriter(urlConnection.getOutputStream());
+								out.print(body);
+								out.close();
+							}
+							
+							int responseCode = urlConnection.getResponseCode();
+							if(!responseCodeOk(responseCode)){		//Response code was not ok, output a log message
+								Log.e(TAG, "Error executing "+requestMethod.stringValue+" request, response code was: "+responseCode);
+							}
+							responseString = readResponse(urlConnection);
+						}
+						catch (Exception e) {		//Reach here if the server didn't give us a socket or some other exception occurred
+							//The policy in this case is to retry the connection, provided we have not already reached the maximum number of retries
+							if(maximumRetries>0){			//True if there is still at least one retry left
+								Log.e(TAG, "Exception while executing request: "+e.toString());
+								Log.d(TAG, "Retrying, retries remaining: "+maximumRetries);
+								executePostRequest(requestCode, address, headers, body, maximumRetries-1, allowCaching, extras);
+							}
+						}
+						finally {
+							urlConnection.disconnect();
+						}
+						
+						if(responseString!=null){
+							if(debugRequests){
+								Log.d(TAG+" "+requestMethod.stringValue+" RESPONSE:", responseString);
+							}
+							sendRequestCompleteEvent(requestCode, responseString, extras);
+						}
+						else{
+							sendErrorEvent(requestCode, ERROR_EMPTY_RESPONSE, extras);
+						}
+					}
+					else{
+						sendErrorEvent(requestCode, ERROR_URL_INVALID, extras);
+					}
+				}
+			});
+			postRequestThread.start();
+		}
+		else{
+			sendErrorEvent(requestCode, ERROR_NO_CONNECTION, extras);
+		}
+	}
+	
 	public void downloadFile(final Integer requestCode, final String address, final String destinationPath, final String desiredFileName, final int maximumRetries, final int timeoutSeconds, final Bundle extras){
 		Log.d(TAG, "Downloading from: "+address+" to: "+destinationPath);
 		Thread downloadFileThread = new Thread(new Runnable() {
