@@ -10,16 +10,18 @@ import android.os.Bundle;
 public interface HttpEvents{
 	
 	/**
-	 * Called when there is new progress to report during a file upload ({@link Http#executePostRequest(Integer, String, File, int, Bundle)}).
-	 * This may be called multiple times during the upload, but there will always be at least 100ms between succesive calls, to avoid
-	 * spamming the UI thread. One exception to this rule is that this event is sent when the last set of bytes have been uploaded,
+	 * Called when there is new progress to report during a file upload or download.
+	 * This may be called multiple times during the process, but there will always be at least 100ms between successive calls, to avoid
+	 * spamming the UI thread. One exception to this rule is that this event is sent when the last set of bytes have been processed,
 	 * irrespective of when the previous event was sent.
 	 * @param requestCode		The integer code provided when the request was executed.
-	 * @param bytesUploaded		The number of bytes uploaded so far.
-	 * @param fileSize			The size of the file being uploaded, in bytes
+	 * @param bytesTotal		The size of the file being processed, in bytes.
+	 * @param bytesProcessed	The number of bytes processed so far.
 	 * @param extras			The {@link Bundle} of extras that was provided when the requested was executed. This will be null if no extras were provided.
 	 */
-	public void fileUploadProgress(Integer requestCode, long bytesUploaded, long fileSize, Bundle extras);
+	public void newProgress(int requestCode, long bytesTotal, long bytesProcessed, Bundle extras);
+	
+	public void fileDownloaded(int requestCode, File downloadedFile, Bundle extras);
 
 	/**
 	 * Called when an HTTP request has been successfully completed. This event will only be called if an

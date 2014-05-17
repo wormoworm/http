@@ -36,12 +36,16 @@ public class Http {
 	public static final int ERROR_URL_INVALID = 3;
 	public static final int ERROR_SERVER_ERROR = 4;
 	public static final int ERROR_LOCAL_FILE_INVALID = 10;
+	public static final int ERROR_RESPONSE_DATA_INVALID = 11;
 	
 	public static final int RESPONSE_STATUS_ERROR = 1;
 	public static final int RESPONSE_STATUS_SUCCESS = 2;
 	
 	public static final int DEFAULT_RETRIES = 5;
 	public static final int DEFAULT_TIMEOUT_SECONDS = 10;
+
+	protected static final int CONNECT_TIMEOUT_MS = 3000;
+	protected static final int READ_TIMEOUT_MS = 5000;
 	
 	private final int MIN_FILE_UPLOAD_INTERVAL_MS = 100;
 	
@@ -64,7 +68,7 @@ public class Http {
 	public Http(Context context, HttpEvents eventListener){
 		connectivityManager = (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
 		
-		parentInterface = (HttpEvents) eventListener;
+		parentInterface = eventListener;
 		handler = new Handler();
 		setDebuggingEnabled(true);
 	}
@@ -281,7 +285,9 @@ public class Http {
 	}
 
 	private boolean responseCodeOk(int responseCode) {
-		return responseCode==HttpURLConnection.HTTP_OK || responseCode ==HttpURLConnection.HTTP_CREATED;
+		return 		responseCode==HttpURLConnection.HTTP_OK
+				|| 	responseCode==HttpURLConnection.HTTP_CREATED
+				||	responseCode==HttpURLConnection.HTTP_NO_CONTENT;
 	}
 
 	private void addRequestHeadersToConnection(HttpURLConnection urlConnection, HashMap<String, String> headers) {
@@ -365,14 +371,14 @@ public class Http {
 									compressedOutputStream.write(buffer, 0, bufferLength);		//Read from the contents of the buffer and write the bytes we read to a compressed output stream
 									bytesUploaded+= bufferLength;
 									if((System.currentTimeMillis() - lastFileProgressEventTimestamp) > MIN_FILE_UPLOAD_INTERVAL_MS){
-										sendFileUploadProgressEvent(requestCode, bytesUploaded, fileLength, extras);
+										sendNewProgressEvent(requestCode, bytesUploaded, fileLength, extras);
 									}
 								}
 								else{														//True if this will be the last read from this file. In this case, we do the same as above, but only read until the end fo the file, meaning the buffer may not be full after the read
 									fileInputStream.read(buffer, 0, fileLength - i);
 									compressedOutputStream.write(buffer, 0, fileLength - i);
 									bytesUploaded+= fileLength - i;
-									sendFileUploadProgressEvent(requestCode, bytesUploaded, fileLength, extras);
+									sendNewProgressEvent(requestCode, bytesUploaded, fileLength, extras);
 								}
 							}
 							Log.d(TAG, "Upload complete, bytes: "+bytesUploaded);
@@ -432,6 +438,9 @@ public class Http {
 				public void run() {
 					if(debugRequests){
 						Log.d(TAG+" "+requestMethod.stringValue+" REQUEST:", address);
+						if(body!=null){
+							Log.d(TAG+" "+requestMethod.stringValue+" BODY:", body);
+						}
 					}
 					String responseString = null;
 	
@@ -445,8 +454,8 @@ public class Http {
 					if(url!=null){
 						try {
 							urlConnection = (HttpURLConnection) url.openConnection();
-							urlConnection.setConnectTimeout(2000);
-							urlConnection.setReadTimeout(2500);
+							urlConnection.setConnectTimeout(CONNECT_TIMEOUT_MS);
+							urlConnection.setReadTimeout(READ_TIMEOUT_MS);
 							
 							urlConnection.setRequestMethod(requestMethod.stringValue);
 							
@@ -458,7 +467,9 @@ public class Http {
 								urlConnection.addRequestProperty("Cache-Control", "no-cache");
 							}
 							
-							urlConnection.setRequestProperty("Content-Type", contentType);
+							if(contentType!=null){
+								urlConnection.setRequestProperty("Content-Type", contentType);
+							}
 							
 							if(body!=null){
 								urlConnection.setFixedLengthStreamingMode(body.getBytes().length);
@@ -473,6 +484,16 @@ public class Http {
 								Log.e(TAG, "Error executing "+requestMethod.stringValue+" request, response code was: "+responseCode);
 							}
 							responseString = readResponse(urlConnection);
+							
+							if(responseString!=null){
+								if(debugRequests){
+									Log.d(TAG+" "+requestMethod.stringValue+" RESPONSE:", responseString);
+								}
+								sendRequestCompleteEvent(requestCode, responseString, extras);
+							}
+							else{
+								sendErrorEvent(requestCode, ERROR_EMPTY_RESPONSE, extras);
+							}
 						}
 						catch (Exception e) {		//Reach here if the server didn't give us a socket or some other exception occurred
 							//The policy in this case is to retry the connection, provided we have not already reached the maximum number of retries
@@ -484,16 +505,6 @@ public class Http {
 						}
 						finally {
 							urlConnection.disconnect();
-						}
-						
-						if(responseString!=null){
-							if(debugRequests){
-								Log.d(TAG+" "+requestMethod.stringValue+" RESPONSE:", responseString);
-							}
-							sendRequestCompleteEvent(requestCode, responseString, extras);
-						}
-						else{
-							sendErrorEvent(requestCode, ERROR_EMPTY_RESPONSE, extras);
 						}
 					}
 					else{
@@ -508,7 +519,7 @@ public class Http {
 		}
 	}
 	
-	public void downloadFile(final Integer requestCode, final String address, final String destinationPath, final String desiredFileName, final int maximumRetries, final int timeoutSeconds, final Bundle extras){
+	public void downloadFile(final Integer requestCode, final String address, final HashMap<String, String> headers, final String destinationPath, final String desiredFileName, final int maximumRetries, final int timeoutSeconds, final Bundle extras){
 		Log.d(TAG, "Downloading from: "+address+" to: "+destinationPath);
 		Thread downloadFileThread = new Thread(new Runnable() {
 			public void run(){
@@ -516,6 +527,11 @@ public class Http {
 					URL url = new URL(address);
 					HttpURLConnection httpConn = (HttpURLConnection) url.openConnection();
 					httpConn.setReadTimeout(timeoutSeconds * 1000);
+					
+					if(headers!=null){
+						addRequestHeadersToConnection(httpConn, headers);
+					}
+					
 					int responseCode = httpConn.getResponseCode();
 
 					// always check HTTP response code first
@@ -556,8 +572,13 @@ public class Http {
 						Log.d(TAG, "BYTES READ: "+totalBytes);
 						outputStream.close();
 						inputStream.close();
-						String responseString = "{\"ack\":\"file_downloaded\"}";		//We have to have a response string for completeness
-						sendRequestCompleteEvent(requestCode, responseString, extras);
+						File downloadedFile = new File(saveFilePath);
+						if(downloadedFile.exists()){
+							sendDownloadCompleteEvent(requestCode, downloadedFile, extras);
+						}
+						else{
+							sendErrorEvent(requestCode, ERROR_LOCAL_FILE_INVALID, extras);
+						}
 					}
 					else {
 						sendErrorEvent(requestCode, ERROR_URL_INVALID, extras);
@@ -570,7 +591,7 @@ public class Http {
 					if(maximumRetries>0){			//True if there is still at least one retry left
 						Log.e(TAG, "Exception while executing request: "+e.toString());
 						Log.d(TAG, "Retrying, retries remaining: "+maximumRetries);
-						downloadFile(requestCode, address, destinationPath, desiredFileName, maximumRetries-1, timeoutSeconds, extras);
+						downloadFile(requestCode, address, headers, destinationPath, desiredFileName, maximumRetries-1, timeoutSeconds, extras);
 					}
 					else{
 						sendErrorEvent(requestCode, ERROR_SERVER_ERROR, extras);
@@ -580,7 +601,7 @@ public class Http {
 		});
 		downloadFileThread.start();
 	}
-	
+
 	private String readResponse(HttpURLConnection urlConnection) {
 		try {
 			InputStream in = new BufferedInputStream(urlConnection.getInputStream());
@@ -603,18 +624,30 @@ public class Http {
 		}
 	}
 
-	private void sendFileUploadProgressEvent(final Integer requestCode, final long bytesUploaded, final long fileSize, final Bundle extras) {
+	private void sendNewProgressEvent(final Integer requestCode, final long bytesUploaded, final long fileSize, final Bundle extras) {
 		Log.d(TAG, "TIME: "+System.currentTimeMillis());
 		if(parentInterface!=null && requestCode!=null){
 			Runnable uiThreadTask = new Runnable() {
 				@Override
 				public void run() {
-					parentInterface.fileUploadProgress(requestCode, bytesUploaded, fileSize, extras);
+					parentInterface.newProgress(requestCode, fileSize, bytesUploaded, extras);
 				}
 			};
 			handler.post(uiThreadTask);
 		}
 		lastFileProgressEventTimestamp = System.currentTimeMillis();
+	}
+	
+	private void sendDownloadCompleteEvent(final int requestCode, final File downloadedFile, final Bundle extras) {
+		if(parentInterface!=null){
+			Runnable uiThreadTask = new Runnable() {
+				@Override
+				public void run() {
+					parentInterface.fileDownloaded(requestCode, downloadedFile, extras);
+				}
+			};
+			handler.post(uiThreadTask);
+		}
 	}
 	
 	private void sendRequestCompleteEvent(final Integer requestCode, final String responseString, final Bundle extras) {

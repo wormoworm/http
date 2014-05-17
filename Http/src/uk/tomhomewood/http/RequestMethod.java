@@ -3,8 +3,10 @@ package uk.tomhomewood.http;
 public enum RequestMethod {
 
 	GET("GET"),
+	DELETE("DELETE"),
+	PATCH("PATCH"),
 	POST("POST"),
-	DELETE("DELETE");
+	PUT("PUT");
 
 	public String stringValue;
 	
