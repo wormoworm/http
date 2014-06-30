@@ -431,6 +431,7 @@ public class Http {
 		}
 	}
 	
+	/**TODO still fails multiple times with STE*/
 	public void executeRequest(final RequestMethod requestMethod, final Integer requestCode, final String address, final HashMap<String, String> headers, final String contentType, final String body, final int maximumRetries, final boolean allowCaching, final Bundle extras) {
 		if(isConnected()){
 			Thread postRequestThread = new Thread(new Runnable() {
@@ -450,7 +451,8 @@ public class Http {
 					try {
 						url = new URL(address);
 					}
-					catch (MalformedURLException e) {}
+					catch (MalformedURLException e) {
+					}
 					if(url!=null){
 						try {
 							urlConnection = (HttpURLConnection) url.openConnection();
@@ -535,6 +537,7 @@ public class Http {
 					int responseCode = httpConn.getResponseCode();
 
 					// always check HTTP response code first
+					Log.d(TAG, "Response code: "+responseCode);
 					if(responseCode == HttpURLConnection.HTTP_OK) {
 						String fileName = "";
 						String disposition = httpConn.getHeaderField("Content-Disposition");
@@ -586,7 +589,6 @@ public class Http {
 					httpConn.disconnect();
 				}
 				catch (IOException e) {
-					Log.d(TAG, "Exception while executing request, retrying, retries remaining: "+maximumRetries);
 					//The policy in this case is to retry the connection, provided we have not already reached the maximum number of retries
 					if(maximumRetries>0){			//True if there is still at least one retry left
 						Log.e(TAG, "Exception while executing request: "+e.toString());
