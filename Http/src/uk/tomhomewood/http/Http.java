@@ -482,6 +482,9 @@ public class Http {
 							}
 							
 							int responseCode = urlConnection.getResponseCode();
+							if(debugRequests){
+								Log.d(TAG, "Response code: "+responseCode);
+							}
 							if(!responseCodeOk(responseCode)){		//Response code was not ok, output a log message
 								Log.e(TAG, "Error executing "+requestMethod.stringValue+" request, response code was: "+responseCode);
 							}
